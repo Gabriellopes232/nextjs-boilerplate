@@ -1,113 +1,429 @@
-import Image from 'next/image'
+'use client'
+import { SetStateAction, useState } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
-export default function Home() {
+// DnD
+import {
+  DndContext,
+  DragEndEvent,
+  DragMoveEvent,
+  DragOverlay,
+  DragStartEvent,
+  KeyboardSensor,
+  PointerSensor,
+  UniqueIdentifier,
+  closestCorners,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+} from '@dnd-kit/sortable';
+
+// Componentes
+import Container from './components/Container';
+import Items from './components/Item';
+import Modal from './components/Modal';
+import Input from './components/Input';
+import { Button } from './components/Button';
+
+type DNDType = {
+  id: UniqueIdentifier;
+  title: string;
+  items: {
+    id: UniqueIdentifier;
+    title: string;
+  }[];
+};
+
+export default function Dashboard() {
+  const [containers, setContainers] = useState<DNDType[]>([]);
+  const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
+  const [currentContainerId, setCurrentContainerId] =
+    useState<UniqueIdentifier>();
+  const [containerName, setContainerName] = useState('');
+  const [itemName, setItemName] = useState('');
+  const [showAddContainerModal, setShowAddContainerModal] = useState(false);
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+
+  const onAddContainer = () => {
+    if (!containerName) return;
+    const id = `container-${uuidv4()}`;
+    setContainers([
+      ...containers,
+      {
+        id,
+        title: containerName,
+        items: [],
+      },
+    ]);
+    setContainerName('');
+    setShowAddContainerModal(false);
+    toast.success('Container added successfully!');
+  };
+
+  const onAddItem = () => {
+    if (!itemName) return;
+    const id = `item-${uuidv4()}`;
+    const container = containers.find((item) => item.id === currentContainerId);
+    if (!container) return;
+    container.items.push({
+      id,
+      title: itemName,
+    });
+    setContainers([...containers]);
+    setItemName('');
+    setShowAddItemModal(false);
+    toast.success('Item added successfully!');
+  };
+
+  const onRemoveItem = (containerId: UniqueIdentifier) => {
+    setContainers(containers.filter(container => container.id !== containerId));
+    toast.success('Item removed successfully!');
+  };
+
+  // Encontra o valor dos itens
+  function findValueOfItems(id: UniqueIdentifier | undefined, type: string) {
+    if (type === 'container') {
+      return containers.find((item) => item.id === id);
+    }
+    if (type === 'item') {
+      return containers.find((container) =>
+        container.items.find((item) => item.id === id),
+      );
+    }
+  }
+
+  const findItemTitle = (id: UniqueIdentifier | undefined) => {
+    const container = findValueOfItems(id, 'item');
+    if (!container) return '';
+    const item = container.items.find((item) => item.id === id);
+    if (!item) return '';
+    return item.title;
+  };
+
+  const findContainerTitle = (id: UniqueIdentifier | undefined) => {
+    const container = findValueOfItems(id, 'container');
+    if (!container) return '';
+    return container.title;
+  };
+
+  const findContainerItems = (id: UniqueIdentifier | undefined) => {
+    const container = findValueOfItems(id, 'container');
+    if (!container) return [];
+    return container.items;
+  };
+
+  // DND Handlers
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  function handleDragStart(event: DragStartEvent) {
+    const { active } = event;
+    const { id } = active;
+    setActiveId(id);
+  }
+
+  const handleDragMove = (event: DragMoveEvent) => {
+    const { active, over } = event;
+
+    // Lidar com classificação de itens
+    if (
+      active.id.toString().includes('item') &&
+      over?.id.toString().includes('item') &&
+      active &&
+      over &&
+      active.id !== over.id
+    ) {
+      const activeContainer = findValueOfItems(active.id, 'item');
+      const overContainer = findValueOfItems(over.id, 'item');
+
+      if (!activeContainer || !overContainer) return;
+
+      const activeContainerIndex = containers.findIndex(
+        (container) => container.id === activeContainer.id,
+      );
+      const overContainerIndex = containers.findIndex(
+        (container) => container.id === overContainer.id,
+      );
+
+      const activeitemIndex = activeContainer.items.findIndex(
+        (item) => item.id === active.id,
+      );
+      const overitemIndex = overContainer.items.findIndex(
+        (item) => item.id === over.id,
+      );
+      // No mesmo container
+      if (activeContainerIndex === overContainerIndex) {
+        const newItems = [...containers];
+        newItems[activeContainerIndex].items = arrayMove(
+          newItems[activeContainerIndex].items,
+          activeitemIndex,
+          overitemIndex,
+        );
+
+        setContainers(newItems);
+      } else {
+        // Em containers diferentes
+        const newItems = [...containers];
+        const [removeditem] = newItems[activeContainerIndex].items.splice(
+          activeitemIndex,
+          1,
+        );
+        newItems[overContainerIndex].items.splice(
+          overitemIndex,
+          0,
+          removeditem,
+        );
+        setContainers(newItems);
+      }
+    }
+
+    // Manipulando o Item Drop em um Container
+    if (
+      active.id.toString().includes('item') &&
+      over?.id.toString().includes('container') &&
+      active &&
+      over &&
+      active.id !== over.id
+    ) {
+      // Encontra o container ativo
+      const activeContainer = findValueOfItems(active.id, 'item');
+      const overContainer = findValueOfItems(over.id, 'container');
+
+      // Se o container ativo ou excedente não for encontrado, retorne
+      if (!activeContainer || !overContainer) return;
+
+      // Encontra o index do container ativo e superior
+      const activeContainerIndex = containers.findIndex(
+        (container) => container.id === activeContainer.id,
+      );
+      const overContainerIndex = containers.findIndex(
+        (container) => container.id === overContainer.id,
+      );
+
+      // Encontra o index do item ativo e superior
+      const activeitemIndex = activeContainer.items.findIndex(
+        (item) => item.id === active.id,
+      );
+
+      // Remove o item ativo do container ativo e adiciona ao container superior
+      const newItems = [...containers];
+      const [removeditem] = newItems[activeContainerIndex].items.splice(
+        activeitemIndex,
+        1,
+      );
+      newItems[overContainerIndex].items.push(removeditem);
+      setContainers(newItems);
+    }
+  };
+
+  // Esta é a função que trata da classificação dos contêineres e itens quando o usuário termina de arrastar.
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+
+    if (
+      active.id.toString().includes('container') &&
+      over?.id.toString().includes('container') &&
+      active &&
+      over &&
+      active.id !== over.id
+    ) {
+      const activeContainerIndex = containers.findIndex(
+        (container) => container.id === active.id,
+      );
+      const overContainerIndex = containers.findIndex(
+        (container) => container.id === over.id,
+      );
+      // Troca o container ativo e o over
+      let newItems = [...containers];
+      newItems = arrayMove(newItems, activeContainerIndex, overContainerIndex);
+      setContainers(newItems);
+    }
+
+    // Manipulando a classificação do item
+    if (
+      active.id.toString().includes('item') &&
+      over?.id.toString().includes('item') &&
+      active &&
+      over &&
+      active.id !== over.id
+    ) {
+      // Encontra o container ativo
+      const activeContainer = findValueOfItems(active.id, 'item');
+      const overContainer = findValueOfItems(over.id, 'item');
+
+      // Se o container ativo ou excedente não for encontrado, retorne
+      if (!activeContainer || !overContainer) return;
+      // Encontra o index do container ativo e superior
+      const activeContainerIndex = containers.findIndex(
+        (container) => container.id === activeContainer.id,
+      );
+      const overContainerIndex = containers.findIndex(
+        (container) => container.id === overContainer.id,
+      );
+      const activeitemIndex = activeContainer.items.findIndex(
+        (item) => item.id === active.id,
+      );
+      const overitemIndex = overContainer.items.findIndex(
+        (item) => item.id === over.id,
+      );
+
+      // No mesmo container
+      if (activeContainerIndex === overContainerIndex) {
+        const newItems = [...containers];
+        newItems[activeContainerIndex].items = arrayMove(
+          newItems[activeContainerIndex].items,
+          activeitemIndex,
+          overitemIndex,
+        );
+        setContainers(newItems);
+      } else {
+        // Em diferentes containers
+        const newItems = [...containers];
+        const [removeditem] = newItems[activeContainerIndex].items.splice(
+          activeitemIndex,
+          1,
+        );
+        newItems[overContainerIndex].items.splice(
+          overitemIndex,
+          0,
+          removeditem,
+        );
+        setContainers(newItems);
+      }
+    }
+    // Manipulando o item dropping no Container
+    if (
+      active.id.toString().includes('item') &&
+      over?.id.toString().includes('container') &&
+      active &&
+      over &&
+      active.id !== over.id
+    ) {
+      // Encontra o index do container ativo e superior
+      const activeContainer = findValueOfItems(active.id, 'item');
+      const overContainer = findValueOfItems(over.id, 'container');
+
+      // Se o container ativo ou excedente não for encontrado, retorne
+      if (!activeContainer || !overContainer) return;
+
+      const activeContainerIndex = containers.findIndex(
+        (container) => container.id === activeContainer.id,
+      );
+      const overContainerIndex = containers.findIndex(
+        (container) => container.id === overContainer.id,
+      );
+
+      const activeitemIndex = activeContainer.items.findIndex(
+        (item) => item.id === active.id,
+      );
+
+      const newItems = [...containers];
+      const [removeditem] = newItems[activeContainerIndex].items.splice(
+        activeitemIndex,
+        1,
+      );
+      newItems[overContainerIndex].items.push(removeditem);
+      setContainers(newItems);
+    }
+    setActiveId(null);
+  }
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="mx-auto max-w-7xl py-10">
+      <Modal
+        showModal={showAddContainerModal}
+        setShowModal={setShowAddContainerModal}
+      >
+        <div className="flex flex-col w-full items-start gap-y-4">
+          <h1 className="text-gray-800 text-3xl font-bold">Add Container</h1>
+          <Input
+            type="text"
+            placeholder="Container Title"
+            name="containername"
+            value={containerName}
+            onChange={(e: { target: { value: SetStateAction<string>; }; }) => setContainerName(e.target.value)}
+          />
+          <Button onClick={onAddContainer}>Add container</Button>
+        </div>
+      </Modal>
+      <Modal showModal={showAddItemModal} setShowModal={setShowAddItemModal}>
+        <div className="flex flex-col w-full items-start gap-y-4">
+          <h1 className="text-gray-800 text-3xl font-bold">Add Item</h1>
+          <Input
+            type="text"
+            placeholder="Item Title"
+            name="itemname"
+            value={itemName}
+            onChange={(e: { target: { value: SetStateAction<string>; }; }) => setItemName(e.target.value)}
+          />
+          <Button onClick={onAddItem}>Add Item</Button>
+        </div>
+      </Modal>
+      <div className="flex items-center justify-between gap-y-2">
+        <h1 className="text-gray-800 text-3xl font-bold">Trello-Fake</h1>
+        <Button onClick={() => setShowAddContainerModal(true)}>
+          Add Container
+        </Button>
+      </div>
+      <div className="mt-10">
+        <div className="grid grid-cols-3 gap-6">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            onDragStart={handleDragStart}
+            onDragMove={handleDragMove}
+            onDragEnd={handleDragEnd}
           >
-            By{' '}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+            <SortableContext items={containers.map((i) => i.id)}>
+              {containers.map((container) => (
+                <Container
+                  id={container.id}
+                  title={container.title}
+                  key={container.id}
+                  onAddItem={() => {
+                    setShowAddItemModal(true);
+                    setCurrentContainerId(container.id);
+                  }}
+                  onRemoveItem={() => {
+                    onRemoveItem(container.id)
+                  }}
+                >
+                  <SortableContext items={container.items.map((i) => i.id)}>
+                    <div className="flex items-start flex-col gap-y-4">
+                      {container.items.map((i) => (
+                        <Items title={i.title} id={i.id} key={i.id} />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </Container>
+              ))}
+            </SortableContext>
+            <DragOverlay adjustScale={false}>
+              {activeId && activeId.toString().includes('item') && (
+                <Items id={activeId} title={findItemTitle(activeId)} />
+              )}
+              {activeId && activeId.toString().includes('container') && (
+                <Container id={activeId} title={findContainerTitle(activeId)}>
+                  {findContainerItems(activeId).map((i) => (
+                    <Items key={i.id} title={i.title} id={i.id} />
+                  ))}
+                </Container>
+              )}
+            </DragOverlay>
+          </DndContext>
         </div>
       </div>
-
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
-  )
+      <ToastContainer />
+    </div>
+  );
 }
